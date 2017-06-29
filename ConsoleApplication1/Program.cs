@@ -21,6 +21,8 @@ namespace ConsoleApplication1
             public IPEndPoint EP1 = null;
             public IPEndPoint EP2 = null;
             public Socket Socket;
+            public long EP1Count = 0;
+            public long EP2Count = 0;
             public SSObj(Socket socket)
             {
                 this.Socket = socket;
@@ -60,6 +62,11 @@ namespace ConsoleApplication1
                     CloseTrans();
                     CreateTrans(args);
                 }
+                else
+                {
+                    Console.WriteLine(String.Format("EP1 video:{0} audio{1}", VideoObj.EP1Count, AudioObj.EP1Count));
+                    Console.WriteLine(String.Format("EP2 video:{0} audio{1}", VideoObj.EP2Count, AudioObj.EP2Count));
+                }
             }
         }
 
@@ -72,6 +79,19 @@ namespace ConsoleApplication1
             if (args.Length > 2) { videoPort = int.Parse(args[2]); }
             if (args.Length > 2) { videoPort = int.Parse(args[2]); }
             if (args.Length > 3) { audioPort = int.Parse(args[3]); }
+            IPAddress ip1 = null;
+            int port1 = 0;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i].StartsWith("ep="))
+                {
+                    IPAddress.TryParse(args[i].Substring(3, args[i].IndexOf(":") - 3), out ip1);
+                    int.TryParse(args[i].Substring(args[i].IndexOf(":") + 1), out port1);
+                }
+            }
+            IPEndPoint videoEP1 = new IPEndPoint(ip1, port1);
+            IPEndPoint audioEP1 = new IPEndPoint(ip1, port1 + 2);
+
             Socket videoSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             videoSocket.Bind(new IPEndPoint(ip, videoPort));
             Socket audioSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -81,11 +101,13 @@ namespace ConsoleApplication1
 
             VideoObj = new SSObj(videoSocket);
             VideoObj.type = "Video";
+            VideoObj.EP1 = videoEP1;
             VideoThread = new Thread(new ParameterizedThreadStart(StartTran));
             VideoThread.Start(VideoObj);
 
             AudioObj = new SSObj(audioSocket);
             AudioObj.type = "Audio";
+            AudioObj.EP1 = audioEP1;
             AudioThread = new Thread(new ParameterizedThreadStart(StartTran));
             AudioThread.Start(AudioObj);
 
@@ -93,6 +115,14 @@ namespace ConsoleApplication1
             Console.WriteLine("Video: " + ip.ToString() + ":" + videoPort.ToString());
             Console.WriteLine("Audio: " + ip.ToString() + ":" + audioPort.ToString());
             Console.WriteLine("");
+            if (videoEP1 != null)
+            {
+                Console.WriteLine(String.Format("{0} 第一个客户端  {1}:{2}", "video", videoEP1.Address, videoEP1.Port));
+            }
+            if (audioEP1 != null)
+            {
+                Console.WriteLine(String.Format("{0} 第一个客户端  {1}:{2}", "audio", audioEP1.Address, audioEP1.Port));
+            }
         }
 
         static void CloseTrans()
@@ -147,8 +177,9 @@ namespace ConsoleApplication1
             {
                 try
                 {
-                    if (ssObj.Socket.Available == 0) {
-                        Thread.Sleep(20);
+                    if (ssObj.Socket.Available == 0)
+                    {
+                        //Thread.Sleep(20);
                         continue;
                     }
                     int size = ssObj.Socket.ReceiveFrom(buffer, ref remote);
@@ -179,6 +210,7 @@ namespace ConsoleApplication1
                             else
                             {
                                 byte[] tmpBuffer = epTmpQueue.Dequeue();
+                                ssObj.EP1Count += tmpBuffer.Length;
                                 ssObj.Socket.SendTo(tmpBuffer, 0, tmpBuffer.Length, SocketFlags.None, ssObj.EP2);
                                 Thread.Sleep(10);
                             }
@@ -189,10 +221,12 @@ namespace ConsoleApplication1
                     if (SameEP(ssObj.EP1, remoteEP))
                     {
                         targetEP = ssObj.EP2;
+                        ssObj.EP1Count += size;
                     }
                     else if (SameEP(ssObj.EP2, remoteEP))
                     {
                         targetEP = ssObj.EP1;
+                        ssObj.EP2Count += size;
                     }
                     if (targetEP != null)
                     {
