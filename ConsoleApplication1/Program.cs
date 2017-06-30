@@ -20,6 +20,7 @@ namespace ConsoleApplication1
             public string type = "";
             public IPEndPoint EP1 = null;
             public IPEndPoint EP2 = null;
+            public List<IPEndPoint> DistEPList = new List<IPEndPoint>();
             public Socket Socket;
             public long EP1Count = 0;
             public long EP2Count = 0;
@@ -64,8 +65,8 @@ namespace ConsoleApplication1
                 }
                 else
                 {
-                    Console.WriteLine(String.Format("EP1 video:{0} audio{1}", VideoObj.EP1Count, AudioObj.EP1Count));
-                    Console.WriteLine(String.Format("EP2 video:{0} audio{1}", VideoObj.EP2Count, AudioObj.EP2Count));
+                    Console.WriteLine(String.Format("EP1 video:{0} audio:{1}", VideoObj.EP1Count, AudioObj.EP1Count));
+                    Console.WriteLine(String.Format("EP2 video:{0} audio:{1}", VideoObj.EP2Count, AudioObj.EP2Count));
                 }
             }
         }
@@ -79,35 +80,35 @@ namespace ConsoleApplication1
             if (args.Length > 2) { videoPort = int.Parse(args[2]); }
             if (args.Length > 2) { videoPort = int.Parse(args[2]); }
             if (args.Length > 3) { audioPort = int.Parse(args[3]); }
+            Socket videoSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            videoSocket.Bind(new IPEndPoint(ip, videoPort));
+            Socket audioSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            audioSocket.Bind(new IPEndPoint(ip, audioPort));
+            VideoObj = new SSObj(videoSocket);
+            VideoObj.type = "Video";
+            AudioObj = new SSObj(audioSocket);
+            AudioObj.type = "Audio";
+
             IPAddress ip1 = null;
             int port1 = 0;
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i].StartsWith("ep="))
                 {
-                    IPAddress.TryParse(args[i].Substring(3, args[i].IndexOf(":") - 3), out ip1);
-                    int.TryParse(args[i].Substring(args[i].IndexOf(":") + 1), out port1);
+                    string[] eps = args[i].Substring(3).Split(new string[] { "," }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var ep in eps)
+                    {
+                        IPAddress.TryParse(ep.Substring(0, ep.IndexOf(":")), out ip1);
+                        int.TryParse(ep.Substring(ep.IndexOf(":") + 1), out port1);
+                        VideoObj.DistEPList.Add(new IPEndPoint(ip1, port1));
+                        AudioObj.DistEPList.Add(new IPEndPoint(ip1, port1 + 2));
+                    }
                 }
             }
-            IPEndPoint videoEP1 = new IPEndPoint(ip1, port1);
-            IPEndPoint audioEP1 = new IPEndPoint(ip1, port1 + 2);
-
-            Socket videoSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            videoSocket.Bind(new IPEndPoint(ip, videoPort));
-            Socket audioSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            audioSocket.Bind(new IPEndPoint(ip, audioPort));
 
             IsRuning = true;
-
-            VideoObj = new SSObj(videoSocket);
-            VideoObj.type = "Video";
-            VideoObj.EP1 = videoEP1;
             VideoThread = new Thread(new ParameterizedThreadStart(StartTran));
             VideoThread.Start(VideoObj);
-
-            AudioObj = new SSObj(audioSocket);
-            AudioObj.type = "Audio";
-            AudioObj.EP1 = audioEP1;
             AudioThread = new Thread(new ParameterizedThreadStart(StartTran));
             AudioThread.Start(AudioObj);
 
@@ -115,13 +116,10 @@ namespace ConsoleApplication1
             Console.WriteLine("Video: " + ip.ToString() + ":" + videoPort.ToString());
             Console.WriteLine("Audio: " + ip.ToString() + ":" + audioPort.ToString());
             Console.WriteLine("");
-            if (videoEP1 != null)
+            for (int i = 0; i < VideoObj.DistEPList.Count; i++)
             {
-                Console.WriteLine(String.Format("{0} 第一个客户端  {1}:{2}", "video", videoEP1.Address, videoEP1.Port));
-            }
-            if (audioEP1 != null)
-            {
-                Console.WriteLine(String.Format("{0} 第一个客户端  {1}:{2}", "audio", audioEP1.Address, audioEP1.Port));
+                Console.WriteLine(String.Format("{0} 第{1}个分发客户端  {2}:{3}", "video", i + 1, VideoObj.DistEPList[i].Address, VideoObj.DistEPList[i].Port));
+                Console.WriteLine(String.Format("{0} 第{1}个分发客户端  {2}:{3}", "audio", i + 1, AudioObj.DistEPList[i].Address, AudioObj.DistEPList[i].Port));
             }
         }
 
@@ -187,21 +185,22 @@ namespace ConsoleApplication1
                     if (ssObj.EP1 == null)  // 第一个socket第一次发数据
                     {
                         ssObj.EP1 = remoteEP;
-                        Console.WriteLine(String.Format("{0} 第一个客户端  {1}:{2}", ssObj.type, remoteEP.Address, remoteEP.Port));
+                        Console.WriteLine(String.Format("{0} 第1个转发客户端  {1}:{2}", ssObj.type, remoteEP.Address, remoteEP.Port));
                     }
                     if (ssObj.EP2 == null && SameEP(ssObj.EP1, remoteEP)) // 第二个socket还没发过数据
                     {
                         byte[] tmpBuffer = new byte[size];
                         Array.Copy(buffer, tmpBuffer, size);
-                        epTmpQueue.Enqueue(tmpBuffer); // 缓存
+                        epTmpQueue.Enqueue(tmpBuffer); // 中转缓存
+                        DistData(ssObj.Socket, ssObj.EP1, remoteEP, ssObj.DistEPList, buffer, size); // 分发
                         continue;
                     }
 
                     if (ssObj.EP1 != null && ssObj.EP2 == null) // 第二个socket第一次发
                     {
                         ssObj.EP2 = remoteEP;
-                        Console.WriteLine(String.Format("{0} 第二个客户端  {1}:{2}", ssObj.type, remoteEP.Address, remoteEP.Port));
-                        while (true)  // 发送缓存
+                        Console.WriteLine(String.Format("{0} 第2个转发客户端  {1}:{2}", ssObj.type, remoteEP.Address, remoteEP.Port));
+                        while (true)  // 发送中转缓存
                         {
                             if (epTmpQueue.Count == 0)
                             {
@@ -232,11 +231,30 @@ namespace ConsoleApplication1
                     {
                         ssObj.Socket.SendTo(buffer, 0, size, SocketFlags.None, targetEP);
                     }
+                    if (SameEP(ssObj.EP1, remoteEP))
+                    {
+                        for (int i = 0; i < VideoObj.DistEPList.Count; i++)
+                        {
+                            ssObj.Socket.SendTo(buffer, 0, size, SocketFlags.None, ssObj.DistEPList[i]);
+                        }
+                    }
+                    DistData(ssObj.Socket, ssObj.EP1, remoteEP, ssObj.DistEPList, buffer, size); // 分发
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine(ssObj.type + " StartTran Error:" + ex.Message);
                     break;
+                }
+            }
+        }
+
+        static void DistData(Socket socket, IPEndPoint ep1, IPEndPoint ep2, List<IPEndPoint> ips, byte[] buffer, int size)
+        {
+            if (SameEP(ep1, ep2))
+            {
+                for (int i = 0; i < ips.Count; i++)
+                {
+                    socket.SendTo(buffer, 0, size, SocketFlags.None, ips[i]);
                 }
             }
         }
