@@ -177,7 +177,7 @@ namespace ConsoleApplication1
                 {
                     if (ssObj.Socket.Available == 0)
                     {
-                        //Thread.Sleep(20);
+                        Thread.Sleep(20);
                         continue;
                     }
                     int size = ssObj.Socket.ReceiveFrom(buffer, ref remote);
