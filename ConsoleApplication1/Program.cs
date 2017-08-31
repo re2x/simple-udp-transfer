@@ -15,6 +15,8 @@ namespace ConsoleApplication1
         static SSObj VideoObj;
         static Thread AudioThread;
         static SSObj AudioObj;
+        static string[] startArgs;
+        static bool isRestarting = false;
         class SSObj
         {
             public string type = "";
@@ -49,7 +51,8 @@ namespace ConsoleApplication1
 
         static void Main(string[] args)
         {
-            CreateTrans(args);
+            startArgs = args;
+            CreateTrans(startArgs);
             while (true)
             {
                 string str = Console.ReadLine();
@@ -60,8 +63,7 @@ namespace ConsoleApplication1
                 }
                 else if (str == "p")
                 {
-                    CloseTrans();
-                    CreateTrans(args);
+                    Restart();
                 }
                 else
                 {
@@ -71,8 +73,21 @@ namespace ConsoleApplication1
             }
         }
 
+        static void Restart()
+        {
+            if (isRestarting) { return; }
+            ThreadPool.QueueUserWorkItem((obj) =>
+            {
+                isRestarting = true;
+                CloseTrans();
+                CreateTrans(startArgs);
+                isRestarting = false;
+            });
+        }
+
         static void CreateTrans(string[] args)
         {
+            IsRuning = true;
             IPAddress ip = IPAddress.Any;
             int videoPort = 3000;
             int audioPort = videoPort + 2;
@@ -106,7 +121,6 @@ namespace ConsoleApplication1
                 }
             }
 
-            IsRuning = true;
             VideoThread = new Thread(new ParameterizedThreadStart(StartTran));
             VideoThread.Start(VideoObj);
             AudioThread = new Thread(new ParameterizedThreadStart(StartTran));
@@ -243,6 +257,7 @@ namespace ConsoleApplication1
                 catch (Exception ex)
                 {
                     Console.WriteLine(ssObj.type + " StartTran Error:" + ex.Message);
+                    Restart();
                     break;
                 }
             }
